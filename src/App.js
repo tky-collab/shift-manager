@@ -48,10 +48,12 @@ export default function ShiftManager() {
     if (!gasUrl) return;
     setSyncStatus("syncing");
     try {
+      // no-cors モードでは application/json が text/plain に書き換えられるため
+      // 最初から text/plain で送る（GAS側は JSON.parse で処理）
       await fetch(gasUrl, {
         method: "POST",
         mode: "no-cors",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "text/plain" },
         body: JSON.stringify(rows),
       });
       setSyncStatus("ok");

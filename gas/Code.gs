@@ -1,6 +1,5 @@
 // ============================================================
 //  Shift Manager – Google Apps Script
-//  スプレッドシートIDをここに貼り付けてから Deploy してください
 // ============================================================
 
 const SPREADSHEET_ID = "11XyuNAA5fJ50O7t2ECe0eu2j7PR0o2spkF5tgmYlsXc";
@@ -10,14 +9,20 @@ const SPREADSHEET_ID = "11XyuNAA5fJ50O7t2ECe0eu2j7PR0o2spkF5tgmYlsXc";
 // ------------------------------------------------------------
 function doPost(e) {
   try {
-    const data = JSON.parse(e.postData.contents);
-    const rows = Array.isArray(data) ? data : [data];
-    const ss   = SpreadsheetApp.openById(SPREADSHEET_ID);
+    // no-cors モードでは Content-Type が text/plain になることがある
+    // e.postData.contents は常に生の文字列なので JSON.parse で対応
+    var body = e.postData.contents;
+    var rows = JSON.parse(body);
+    if (!Array.isArray(rows)) rows = [rows];
 
-    rows.forEach(row => {
-      const sheet = getOrCreateStaffSheet(ss, row.staffName);
+    var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+
+    rows.forEach(function(row) {
+      var sheet = getOrCreateStaffSheet(ss, row.staffName);
       upsertRow(sheet, row);
     });
+
+    SpreadsheetApp.flush();
 
     return ContentService
       .createTextOutput(JSON.stringify({ status: "ok", count: rows.length }))
@@ -25,7 +30,7 @@ function doPost(e) {
 
   } catch (err) {
     return ContentService
-      .createTextOutput(JSON.stringify({ status: "error", message: err.message }))
+      .createTextOutput(JSON.stringify({ status: "error", message: String(err) }))
       .setMimeType(ContentService.MimeType.JSON);
   }
 }
@@ -33,7 +38,7 @@ function doPost(e) {
 // ------------------------------------------------------------
 //  GET：疎通確認用
 // ------------------------------------------------------------
-function doGet() {
+function doGet(e) {
   return ContentService
     .createTextOutput(JSON.stringify({ status: "ok", message: "Shift Manager GAS is running" }))
     .setMimeType(ContentService.MimeType.JSON);
@@ -43,71 +48,65 @@ function doGet() {
 //  スタッフ名のシートを取得 or 新規作成
 // ------------------------------------------------------------
 function getOrCreateStaffSheet(ss, staffName) {
-  let sheet = ss.getSheetByName(staffName);
+  var sheet = ss.getSheetByName(staffName);
   if (!sheet) {
     sheet = ss.insertSheet(staffName);
-
-    // ヘッダー行
     sheet.appendRow(["日付", "出勤", "退勤", "休憩(分)", "実働(h)"]);
     sheet.setFrozenRows(1);
 
-    // ヘッダースタイル
-    const header = sheet.getRange(1, 1, 1, 5);
+    var header = sheet.getRange(1, 1, 1, 5);
     header.setBackground("#1a1a2e")
           .setFontColor("#a78bfa")
           .setFontWeight("bold")
           .setHorizontalAlignment("center");
 
-    // 列幅
-    sheet.setColumnWidth(1, 110); // 日付
-    sheet.setColumnWidth(2, 80);  // 出勤
-    sheet.setColumnWidth(3, 80);  // 退勤
-    sheet.setColumnWidth(4, 80);  // 休憩
-    sheet.setColumnWidth(5, 80);  // 実働
+    sheet.setColumnWidth(1, 110);
+    sheet.setColumnWidth(2, 80);
+    sheet.setColumnWidth(3, 80);
+    sheet.setColumnWidth(4, 80);
+    sheet.setColumnWidth(5, 80);
   }
   return sheet;
 }
 
 // ------------------------------------------------------------
-//  日付をキーにして行をupsert（同日の打刻を上書き更新）
-//  App.js は常に最新の inTime/outTime/breakMins を含む完全な
-//  レコードを送信するので、シートの既存値を読み戻す必要はない
+//  日付をキーにして行をupsert
+//  App.js は常に最新の inTime/outTime/breakMins を送信する
 // ------------------------------------------------------------
 function upsertRow(sheet, row) {
-  const inTime    = row.inTime    || "";
-  const outTime   = row.outTime   || "";
-  const breakMins = row.breakMins || 0;
-  const date      = row.date      || "";
-  const workedH   = calcHours(inTime, outTime, breakMins) || "";
+  var date      = String(row.date      || "");
+  var inTime    = String(row.inTime    || "");
+  var outTime   = String(row.outTime   || "");
+  var breakMins = Number(row.breakMins || 0);
+  var workedH   = calcHours(inTime, outTime, breakMins);
 
-  const allValues = sheet.getDataRange().getValues(); // [header, ...data]
+  var allValues = sheet.getDataRange().getValues();
 
-  // 2行目以降から日付列(index 0)で検索
-  let targetRowIndex = -1;
-  for (let i = 1; i < allValues.length; i++) {
-    if (String(allValues[i][0]) === String(date)) {
-      targetRowIndex = i + 1; // スプレッドシートは1始まり
+  // 2行目以降から日付列で検索
+  var targetRowIndex = -1;
+  for (var i = 1; i < allValues.length; i++) {
+    if (String(allValues[i][0]) === date) {
+      targetRowIndex = i + 1; // 1始まり
       break;
     }
   }
 
+  var writeRow = [date, inTime, outTime, breakMins, workedH === null ? "" : workedH];
+
   if (targetRowIndex === -1) {
-    // 該当日の行がない → 新規追加
-    sheet.appendRow([date, inTime, outTime, breakMins, workedH]);
+    sheet.appendRow(writeRow);
     styleDataRow(sheet, sheet.getLastRow());
   } else {
-    // 既存行を上書き（App.js送信値がすべての最新状態）
-    sheet.getRange(targetRowIndex, 1, 1, 5)
-         .setValues([[date, inTime, outTime, breakMins, workedH]]);
+    sheet.getRange(targetRowIndex, 1, 1, 5).setValues([writeRow]);
   }
 }
 
 // ------------------------------------------------------------
-//  データ行のスタイル（交互色・中央寄せ）
+//  データ行のスタイル
 // ------------------------------------------------------------
 function styleDataRow(sheet, rowIndex) {
-  const range = sheet.getRange(rowIndex, 1, 1, 5);
-  const bg    = rowIndex % 2 === 0 ? "#1a1a2e" : "#12121e";
+  var range = sheet.getRange(rowIndex, 1, 1, 5);
+  var bg    = (rowIndex % 2 === 0) ? "#1a1a2e" : "#12121e";
   range.setBackground(bg)
        .setFontColor("#f0ede8")
        .setHorizontalAlignment("center");
@@ -115,12 +114,24 @@ function styleDataRow(sheet, rowIndex) {
 
 // ------------------------------------------------------------
 //  実働時間計算
+//  "HH:MM" 文字列 2つと休憩分を受け取って時間数(文字列)を返す
 // ------------------------------------------------------------
 function calcHours(start, end, breakMins) {
-  if (!start || !end) return null;
-  const [sh, sm] = start.split(":").map(Number);
-  const [eh, em] = end.split(":").map(Number);
-  const mins = (eh * 60 + em) - (sh * 60 + sm) - (breakMins || 0);
+  if (!start || !end || start === "" || end === "") return null;
+
+  var sp = start.split(":");
+  var ep = end.split(":");
+  if (sp.length < 2 || ep.length < 2) return null;
+
+  var sh = parseInt(sp[0], 10);
+  var sm = parseInt(sp[1], 10);
+  var eh = parseInt(ep[0], 10);
+  var em = parseInt(ep[1], 10);
+
+  if (isNaN(sh) || isNaN(sm) || isNaN(eh) || isNaN(em)) return null;
+
+  var mins = (eh * 60 + em) - (sh * 60 + sm) - Number(breakMins || 0);
   if (mins <= 0) return null;
+
   return (mins / 60).toFixed(2);
 }
