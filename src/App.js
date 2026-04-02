@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react";
 
+const DEFAULT_GAS_URL = "https://script.google.com/macros/s/AKfycbx_8yuah9cRkoNRGWtvMYvjuV5TnaYBrT9YkObapTCIVPgbYeX3E9lWZm-vXNuxfqQYzg/exec";
+
 const STAFF_LIST = ["スタッフ1", "スタッフ2", "スタッフ3", "スタッフ4", "スタッフ5", "スタッフ6", "スタッフ7"];
 const initialStaff = STAFF_LIST.map((name, i) => ({ id: i + 1, name }));
 
@@ -33,8 +35,8 @@ export default function ShiftManager() {
   const [toast,setToast]=useState(null);
   const [exportModal,setExportModal]=useState(false);
   const [exportMonth,setExportMonth]=useState("all");
-  const [gasUrl,setGasUrl]=useState(()=>localStorage.getItem("shift_gas_url")||"");
-  const [gasUrlInput,setGasUrlInput]=useState(()=>localStorage.getItem("shift_gas_url")||"");
+  const [gasUrl,setGasUrl]=useState(()=>localStorage.getItem("shift_gas_url")||DEFAULT_GAS_URL);
+  const [gasUrlInput,setGasUrlInput]=useState(()=>localStorage.getItem("shift_gas_url")||DEFAULT_GAS_URL);
   const [syncStatus,setSyncStatus]=useState(null); // "syncing" | "ok" | "error"
 
   useEffect(()=>{ const t=setInterval(()=>setNow(new Date()),1000); return ()=>clearInterval(t); },[]);
