@@ -2,15 +2,13 @@
 //  Shift Manager – Google Apps Script
 // ============================================================
 
-const SPREADSHEET_ID = "11XyuNAA5fJ50O7t2ECe0eu2j7PR0o2spkF5tgmYlsXc";
+var SPREADSHEET_ID = "11XyuNAA5fJ50O7t2ECe0eu2j7PR0o2spkF5tgmYlsXc";
 
 // ------------------------------------------------------------
 //  POST：打刻データを受け取り、スタッフ別シートにupsert
 // ------------------------------------------------------------
 function doPost(e) {
   try {
-    // no-cors モードでは Content-Type が text/plain になることがある
-    // e.postData.contents は常に生の文字列なので JSON.parse で対応
     var body = e.postData.contents;
     var rows = JSON.parse(body);
     if (!Array.isArray(rows)) rows = [rows];
@@ -54,6 +52,9 @@ function getOrCreateStaffSheet(ss, staffName) {
     sheet.appendRow(["日付", "出勤", "退勤", "休憩(分)", "実働(h)"]);
     sheet.setFrozenRows(1);
 
+    // 日付・時刻列をテキスト形式に固定（Sheetsの自動型変換を防ぐ）
+    sheet.getRange("A:C").setNumberFormat("@");
+
     var header = sheet.getRange(1, 1, 1, 5);
     header.setBackground("#1a1a2e")
           .setFontColor("#a78bfa")
@@ -71,7 +72,6 @@ function getOrCreateStaffSheet(ss, staffName) {
 
 // ------------------------------------------------------------
 //  日付をキーにして行をupsert
-//  App.js は常に最新の inTime/outTime/breakMins を送信する
 // ------------------------------------------------------------
 function upsertRow(sheet, row) {
   var date      = String(row.date      || "");
@@ -82,16 +82,17 @@ function upsertRow(sheet, row) {
 
   var allValues = sheet.getDataRange().getValues();
 
-  // 2行目以降から日付列で検索
+  // Google Sheets が日付セルを Date 型に変換することがあるため
+  // toDateStr() で "YYYY-MM-DD" に正規化してから比較する
   var targetRowIndex = -1;
   for (var i = 1; i < allValues.length; i++) {
-    if (String(allValues[i][0]) === date) {
-      targetRowIndex = i + 1; // 1始まり
+    if (toDateStr(allValues[i][0]) === date) {
+      targetRowIndex = i + 1; // スプレッドシートは1始まり
       break;
     }
   }
 
-  var writeRow = [date, inTime, outTime, breakMins, workedH === null ? "" : workedH];
+  var writeRow = [date, inTime, outTime, breakMins, workedH !== null ? workedH : ""];
 
   if (targetRowIndex === -1) {
     sheet.appendRow(writeRow);
@@ -102,7 +103,21 @@ function upsertRow(sheet, row) {
 }
 
 // ------------------------------------------------------------
-//  データ行のスタイル
+//  セル値を "YYYY-MM-DD" 文字列に変換する
+//  （Sheets が Date 型で返してきた場合も正しく処理する）
+// ------------------------------------------------------------
+function toDateStr(val) {
+  if (val instanceof Date) {
+    var y = val.getFullYear();
+    var m = String(val.getMonth() + 1).padStart(2, "0");
+    var d = String(val.getDate()).padStart(2, "0");
+    return y + "-" + m + "-" + d;
+  }
+  return String(val);
+}
+
+// ------------------------------------------------------------
+//  データ行のスタイル（交互色・中央寄せ）
 // ------------------------------------------------------------
 function styleDataRow(sheet, rowIndex) {
   var range = sheet.getRange(rowIndex, 1, 1, 5);
@@ -114,7 +129,7 @@ function styleDataRow(sheet, rowIndex) {
 
 // ------------------------------------------------------------
 //  実働時間計算
-//  "HH:MM" 文字列 2つと休憩分を受け取って時間数(文字列)を返す
+//  "HH:MM" 2つと休憩分を受け取り、実働時間(h)の文字列を返す
 // ------------------------------------------------------------
 function calcHours(start, end, breakMins) {
   if (!start || !end || start === "" || end === "") return null;
