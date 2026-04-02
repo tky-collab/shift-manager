@@ -70,9 +70,16 @@ function getOrCreateStaffSheet(ss, staffName) {
 
 // ------------------------------------------------------------
 //  日付をキーにして行をupsert（同日の打刻を上書き更新）
+//  App.js は常に最新の inTime/outTime/breakMins を含む完全な
+//  レコードを送信するので、シートの既存値を読み戻す必要はない
 // ------------------------------------------------------------
 function upsertRow(sheet, row) {
-  const { date, direction, inTime, outTime, breakMins } = row;
+  const inTime    = row.inTime    || "";
+  const outTime   = row.outTime   || "";
+  const breakMins = row.breakMins || 0;
+  const date      = row.date      || "";
+  const workedH   = calcHours(inTime, outTime, breakMins) || "";
+
   const allValues = sheet.getDataRange().getValues(); // [header, ...data]
 
   // 2行目以降から日付列(index 0)で検索
@@ -86,26 +93,12 @@ function upsertRow(sheet, row) {
 
   if (targetRowIndex === -1) {
     // 該当日の行がない → 新規追加
-    const newInTime    = direction === "in"    ? (inTime    || "") : "";
-    const newOutTime   = direction === "out"   ? (outTime   || "") : "";
-    const newBreakMins = direction === "break" ? (breakMins || 0)  : 0;
-    const workedH      = calcHours(newInTime, newOutTime, newBreakMins) || "";
-    sheet.appendRow([date, newInTime, newOutTime, newBreakMins, workedH]);
-
-    // 新行のスタイル
-    const lastRow = sheet.getLastRow();
-    styleDataRow(sheet, lastRow);
-
+    sheet.appendRow([date, inTime, outTime, breakMins, workedH]);
+    styleDataRow(sheet, sheet.getLastRow());
   } else {
-    // 既存行を部分更新（打刻種別に応じて該当列だけ上書き）
-    const existing     = allValues[targetRowIndex - 1];
-    const newInTime    = direction === "in"    ? (inTime    || "") : (existing[1] || "");
-    const newOutTime   = direction === "out"   ? (outTime   || "") : (existing[2] || "");
-    const newBreakMins = direction === "break" ? (breakMins || 0)  : (existing[3] || 0);
-    const workedH      = calcHours(newInTime, newOutTime, newBreakMins) || "";
-
+    // 既存行を上書き（App.js送信値がすべての最新状態）
     sheet.getRange(targetRowIndex, 1, 1, 5)
-         .setValues([[date, newInTime, newOutTime, newBreakMins, workedH]]);
+         .setValues([[date, inTime, outTime, breakMins, workedH]]);
   }
 }
 
