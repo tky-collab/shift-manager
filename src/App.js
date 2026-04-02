@@ -33,10 +33,37 @@ export default function ShiftManager() {
   const [toast,setToast]=useState(null);
   const [exportModal,setExportModal]=useState(false);
   const [exportMonth,setExportMonth]=useState("all");
+  const [gasUrl,setGasUrl]=useState(()=>localStorage.getItem("shift_gas_url")||"");
+  const [gasUrlInput,setGasUrlInput]=useState(()=>localStorage.getItem("shift_gas_url")||"");
+  const [syncStatus,setSyncStatus]=useState(null); // "syncing" | "ok" | "error"
 
   useEffect(()=>{ const t=setInterval(()=>setNow(new Date()),1000); return ()=>clearInterval(t); },[]);
   useEffect(()=>{ localStorage.setItem("shift_staff",JSON.stringify(staff)); },[staff]);
   useEffect(()=>{ localStorage.setItem("shift_records",JSON.stringify(records)); },[records]);
+
+  async function syncToSheet(rows) {
+    if (!gasUrl) return;
+    setSyncStatus("syncing");
+    try {
+      await fetch(gasUrl, {
+        method: "POST",
+        mode: "no-cors",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(rows),
+      });
+      setSyncStatus("ok");
+    } catch {
+      setSyncStatus("error");
+    } finally {
+      setTimeout(() => setSyncStatus(null), 3000);
+    }
+  }
+
+  function saveGasUrl() {
+    localStorage.setItem("shift_gas_url", gasUrlInput.trim());
+    setGasUrl(gasUrlInput.trim());
+    showToast(gasUrlInput.trim() ? "スプレッドシート連携を設定したで！" : "連携を解除したで");
+  }
 
   function showToast(msg,type="success") { setToast({msg,type}); setTimeout(()=>setToast(null),2500); }
   function toggleSelect(id) { setSelectedIds(prev=>prev.includes(id)?prev.filter(x=>x!==id):[...prev,id]); }
@@ -61,6 +88,13 @@ export default function ShiftManager() {
     setRecords(newRecords);setSelectedIds([]);
     const label=direction==="in"?"出勤":direction==="out"?"退勤":`休憩(${breakMins}分)`;
     showToast(`${selectedIds.length}人の${label}を記録したで！`);
+
+    // スプレッドシートに同期
+    const syncRows = selectedIds.map(id => {
+      const rec = newRecords.find(r => r.staffId===id && r.date===date);
+      return { staffName: rec?.staffName||"", date, direction, inTime: rec?.inTime||"", outTime: rec?.outTime||"", breakMins: direction==="break"?breakMins:rec?.breakMins||0 };
+    });
+    syncToSheet(syncRows);
   }
 
   function deleteRecord(id){setRecords(prev=>prev.filter(r=>r.id!==id));}
@@ -112,7 +146,13 @@ export default function ShiftManager() {
             <div style={{fontSize:11,color:"#6c7a9c",letterSpacing:3,textTransform:"uppercase",marginBottom:2}}>Shift Manager</div>
             <div style={{fontSize:22,fontWeight:700,color:"#e8e0ff"}}>{now.toLocaleDateString("ja-JP",{month:"long",day:"numeric",weekday:"short"})}</div>
           </div>
-          <div style={{fontSize:32,fontWeight:300,color:"#a78bfa",letterSpacing:-1}}>{now.toTimeString().slice(0,8)}</div>
+          <div style={{textAlign:"right"}}>
+            <div style={{fontSize:32,fontWeight:300,color:"#a78bfa",letterSpacing:-1}}>{now.toTimeString().slice(0,8)}</div>
+            {syncStatus==="syncing"&&<div style={{fontSize:10,color:"#6c7a9c",marginTop:2}}>📡 同期中...</div>}
+            {syncStatus==="ok"&&<div style={{fontSize:10,color:"#34d399",marginTop:2}}>✓ シート同期済み</div>}
+            {syncStatus==="error"&&<div style={{fontSize:10,color:"#f87171",marginTop:2}}>⚠ 同期失敗</div>}
+            {!syncStatus&&gasUrl&&<div style={{fontSize:10,color:"#4c4c6e",marginTop:2}}>🔗 シート連携中</div>}
+          </div>
         </div>
       </div>
 
@@ -262,6 +302,33 @@ export default function ShiftManager() {
             </div>
             <div style={{marginTop:12}}>
               <button onClick={()=>{if(window.confirm("全記録を削除してええ？")){setRecords([]);showToast("全記録を削除したで");}}} style={{width:"100%",padding:"14px 0",border:"1.5px solid #4c1d95",borderRadius:16,background:"none",color:"#7c3aed",fontSize:14,fontWeight:600,cursor:"pointer"}}>🗑 全記録を削除</button>
+            </div>
+            <div style={{marginTop:24}}>
+              <div style={{fontSize:14,fontWeight:700,marginBottom:12,color:"#e8e0ff"}}>🔗 Googleスプレッドシート連携</div>
+              <div style={{...S.card,marginBottom:0}}>
+                <div style={{fontSize:12,color:"#6c7a9c",fontWeight:600,marginBottom:6}}>GAS WebアプリのURL</div>
+                <input
+                  value={gasUrlInput}
+                  onChange={e=>setGasUrlInput(e.target.value)}
+                  placeholder="https://script.google.com/macros/s/..."
+                  style={{width:"100%",background:"#0f0f14",border:"1.5px solid #2a2a3e",borderRadius:10,color:"#e8e0ff",fontSize:12,padding:"10px 12px",outline:"none",boxSizing:"border-box",marginBottom:10,wordBreak:"break-all"}}
+                />
+                <button onClick={saveGasUrl} style={{width:"100%",padding:"12px 0",border:"none",borderRadius:10,background:"linear-gradient(135deg,#065f46,#047857)",color:"#34d399",fontSize:14,fontWeight:700,cursor:"pointer"}}>
+                  {gasUrl?"🔄 URLを更新":"✅ 連携を有効にする"}
+                </button>
+                {gasUrl&&(
+                  <button onClick={()=>{setGasUrlInput("");setGasUrl("");localStorage.removeItem("shift_gas_url");showToast("連携を解除したで");}} style={{width:"100%",marginTop:8,padding:"10px 0",border:"1.5px solid #4c1d95",borderRadius:10,background:"none",color:"#7c3aed",fontSize:13,fontWeight:600,cursor:"pointer"}}>
+                    🔌 連携を解除
+                  </button>
+                )}
+                <div style={{fontSize:11,color:"#4c4c6e",marginTop:10,lineHeight:1.7}}>
+                  ① gas/Code.gs をGASにコピー<br/>
+                  ② スプレッドシートIDを貼り付けて保存<br/>
+                  ③「デプロイ」→「新しいデプロイ」→ 種類：ウェブアプリ<br/>
+                  ④ アクセス権：「全員」に設定してデプロイ<br/>
+                  ⑤ 表示されたURLをここに貼り付け
+                </div>
+              </div>
             </div>
           </div>
         )}
