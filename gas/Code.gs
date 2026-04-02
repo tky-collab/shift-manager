@@ -9,8 +9,7 @@ var SPREADSHEET_ID = "11XyuNAA5fJ50O7t2ECe0eu2j7PR0o2spkF5tgmYlsXc";
 // ------------------------------------------------------------
 function doPost(e) {
   try {
-    var body = e.postData.contents;
-    var rows = JSON.parse(body);
+    var rows = JSON.parse(e.postData.contents);
     if (!Array.isArray(rows)) rows = [rows];
 
     var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
@@ -49,17 +48,19 @@ function getOrCreateStaffSheet(ss, staffName) {
   var sheet = ss.getSheetByName(staffName);
   if (!sheet) {
     sheet = ss.insertSheet(staffName);
-    sheet.appendRow(["日付", "出勤", "退勤", "休憩(分)", "実働(h)"]);
-    sheet.setFrozenRows(1);
 
-    // 日付・時刻列をテキスト形式に固定（Sheetsの自動型変換を防ぐ）
+    // 日付・時刻列をテキスト形式に設定（Sheetsの自動型変換を防ぐ）
     sheet.getRange("A:C").setNumberFormat("@");
 
-    var header = sheet.getRange(1, 1, 1, 5);
-    header.setBackground("#1a1a2e")
-          .setFontColor("#a78bfa")
-          .setFontWeight("bold")
-          .setHorizontalAlignment("center");
+    // ヘッダー行をsetValuesで書き込む
+    var headerRange = sheet.getRange(1, 1, 1, 5);
+    headerRange.setValues([["日付", "出勤", "退勤", "休憩(分)", "実働(h)"]]);
+    sheet.setFrozenRows(1);
+
+    headerRange.setBackground("#1a1a2e")
+               .setFontColor("#a78bfa")
+               .setFontWeight("bold")
+               .setHorizontalAlignment("center");
 
     sheet.setColumnWidth(1, 110);
     sheet.setColumnWidth(2, 80);
@@ -72,6 +73,8 @@ function getOrCreateStaffSheet(ss, staffName) {
 
 // ------------------------------------------------------------
 //  日付をキーにして行をupsert
+//  - 同じスタッフ・同じ日付は必ず1行にまとめる
+//  - 出勤・退勤・休憩が揃ったら実働時間を自動計算
 // ------------------------------------------------------------
 function upsertRow(sheet, row) {
   var date      = String(row.date      || "");
@@ -80,40 +83,36 @@ function upsertRow(sheet, row) {
   var breakMins = Number(row.breakMins || 0);
   var workedH   = calcHours(inTime, outTime, breakMins);
 
+  var tz        = Session.getScriptTimeZone();
   var allValues = sheet.getDataRange().getValues();
 
-  // Google Sheets が日付セルを Date 型に変換することがあるため
-  // toDateStr() で "YYYY-MM-DD" に正規化してから比較する
+  // ── 既存行の検索 ──────────────────────────────────────────
+  // Google Sheets は "2026-04-03" 形式の文字列を Date 型に自動変換する。
+  // getValues() で Date オブジェクトが返ってくるため、
+  // Utilities.formatDate() でスクリプトのタイムゾーン基準に正規化して比較する。
   var targetRowIndex = -1;
   for (var i = 1; i < allValues.length; i++) {
-    if (toDateStr(allValues[i][0]) === date) {
+    var cellVal = allValues[i][0];
+    var cellDate = (cellVal instanceof Date)
+      ? Utilities.formatDate(cellVal, tz, "yyyy-MM-dd")
+      : String(cellVal);
+    if (cellDate === date) {
       targetRowIndex = i + 1; // スプレッドシートは1始まり
       break;
     }
   }
 
-  var writeRow = [date, inTime, outTime, breakMins, workedH !== null ? workedH : ""];
+  var writeData = [[date, inTime, outTime, breakMins, workedH !== null ? workedH : ""]];
 
   if (targetRowIndex === -1) {
-    sheet.appendRow(writeRow);
-    styleDataRow(sheet, sheet.getLastRow());
+    // 該当日の行がない → 新規追加
+    var newRowIndex = sheet.getLastRow() + 1;
+    sheet.getRange(newRowIndex, 1, 1, 5).setValues(writeData);
+    styleDataRow(sheet, newRowIndex);
   } else {
-    sheet.getRange(targetRowIndex, 1, 1, 5).setValues([writeRow]);
+    // 既存行を上書き（出勤・退勤・休憩を同じ行に集約）
+    sheet.getRange(targetRowIndex, 1, 1, 5).setValues(writeData);
   }
-}
-
-// ------------------------------------------------------------
-//  セル値を "YYYY-MM-DD" 文字列に変換する
-//  （Sheets が Date 型で返してきた場合も正しく処理する）
-// ------------------------------------------------------------
-function toDateStr(val) {
-  if (val instanceof Date) {
-    var y = val.getFullYear();
-    var m = String(val.getMonth() + 1).padStart(2, "0");
-    var d = String(val.getDate()).padStart(2, "0");
-    return y + "-" + m + "-" + d;
-  }
-  return String(val);
 }
 
 // ------------------------------------------------------------
@@ -129,7 +128,8 @@ function styleDataRow(sheet, rowIndex) {
 
 // ------------------------------------------------------------
 //  実働時間計算
-//  "HH:MM" 2つと休憩分を受け取り、実働時間(h)の文字列を返す
+//  "HH:MM" × 2 と休憩分を受け取り、実働時間(h) を文字列で返す
+//  出勤・退勤どちらかが空の場合は null を返す
 // ------------------------------------------------------------
 function calcHours(start, end, breakMins) {
   if (!start || !end || start === "" || end === "") return null;
