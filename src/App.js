@@ -26,6 +26,7 @@ export default function ShiftManager() {
   const [selectedIds,setSelectedIds]=useState([]);
   const [punchType,setPunchType]=useState("clock");
   const [manualTime,setManualTime]=useState("09:00");
+  const [punchDate,setPunchDate]=useState(()=>formatDate(new Date()));
   const [direction,setDirection]=useState("in");
   const [breakMins,setBreakMins]=useState(60);
   const [now,setNow]=useState(new Date());
@@ -74,7 +75,7 @@ export default function ShiftManager() {
   function handlePunch() {
     if(selectedIds.length===0){showToast("スタッフを選んでや！","warn");return;}
     const time=punchType==="clock"?formatTime(now):manualTime;
-    const date=formatDate(now);
+    const date=punchDate;
     const newRecords=[...records];
     selectedIds.forEach(id=>{
       const member=staff.find(s=>s.id===id);
@@ -186,7 +187,15 @@ export default function ShiftManager() {
               </div>
             )}
             <div style={S.card}>
-              <div style={{fontSize:12,color:"#6c7a9c",marginBottom:10,fontWeight:600}}>打刻方式</div>
+              <div style={{fontSize:12,color:"#6c7a9c",marginBottom:10,fontWeight:600}}>打刻日付</div>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
+                <input type="date" value={punchDate} max={formatDate(now)} onChange={e=>setPunchDate(e.target.value)} style={{flex:1,background:"#0f0f14",border:"1.5px solid #2a2a3e",borderRadius:10,color:"#e8e0ff",fontSize:15,padding:"10px 12px",outline:"none",colorScheme:"dark"}}/>
+                <button onClick={()=>setPunchDate(formatDate(now))} style={{padding:"10px 14px",borderRadius:10,background:punchDate===formatDate(now)?"#2d1b69":"#0f0f14",border:punchDate===formatDate(now)?"1.5px solid #7c3aed":"1.5px solid #2a2a3e",color:punchDate===formatDate(now)?"#a78bfa":"#6c7a9c",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>今日</button>
+              </div>
+              {punchDate!==formatDate(now)&&<div style={{fontSize:11,color:"#d97706",marginTop:6}}>⚠ 過去日付で打刻します</div>}
+            </div>
+            <div style={S.card}>
+              <div style={{fontSize:12,color:"#6c7a9c",marginBottom:10,fontWeight:600}}>打刻時刻</div>
               <div style={{display:"flex",gap:8,marginBottom:punchType==="manual"?12:0}}>
                 {[["clock","🕐 今の時刻"],["manual","✏️ 手入力"]].map(([val,label])=>(
                   <button key={val} onClick={()=>setPunchType(val)} style={{flex:1,padding:"10px 0",borderRadius:10,fontWeight:600,fontSize:13,cursor:"pointer",background:punchType===val?"#2d1b69":"#0f0f14",color:punchType===val?"#a78bfa":"#6c7a9c",border:punchType===val?"1.5px solid #7c3aed":"1.5px solid #2a2a3e"}}>{label}</button>
