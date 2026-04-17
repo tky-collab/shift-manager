@@ -5,6 +5,31 @@
 var SPREADSHEET_ID = "11XyuNAA5fJ50O7t2ECe0eu2j7PR0o2spkF5tgmYlsXc";
 var HEADERS = ["日付", "出勤", "退勤", "休憩(分)", "実働(h)", "時給", "支払額"];
 
+// シートで時給や時刻を手入力したら 実働・支払額 を自動再計算（シンプルトリガー）
+function onEdit(e) {
+  if (!e || !e.range) return;
+  var sh = e.range.getSheet();
+  var row = e.range.getRow();
+  var col = e.range.getColumn();
+  if (row < 2 || col > 7) return;
+
+  // ヘッダーが「日付」で始まるシートだけ対象
+  var header = sh.getRange(1, 1).getValue();
+  if (header !== "日付") return;
+
+  var tz = Session.getScriptTimeZone();
+  var vals = sh.getRange(row, 1, 1, 7).getValues()[0];
+  var inT = toTimeStr(vals[1], tz);
+  var outT = toTimeStr(vals[2], tz);
+  var brk = Number(vals[3]) || 0;
+  var hours = calcHours(inT, outT, brk);
+  var wage = Number(vals[5]) || 0;
+  var pay = (hours !== "" && wage > 0) ? Math.round(hours * wage) : "";
+
+  sh.getRange(row, 5).setValue(hours);
+  sh.getRange(row, 7).setValue(pay);
+}
+
 function doPost(e) {
   var data = JSON.parse(e.postData.contents);
   var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
