@@ -17,6 +17,9 @@ function onEdit(e) {
   var header = sh.getRange(1, 1).getValue();
   if (header !== "日付") return;
 
+  // 合計行を編集してしまった場合はスキップ
+  if (sh.getRange(row, 1).getValue() === "合計") return;
+
   var tz = Session.getScriptTimeZone();
   var vals = sh.getRange(row, 1, 1, 7).getValues()[0];
   var inT = toTimeStr(vals[1], tz);
@@ -28,6 +31,30 @@ function onEdit(e) {
 
   sh.getRange(row, 5).setValue(hours);
   sh.getRange(row, 7).setValue(pay);
+  updateTotalRow(sh);
+}
+
+// シート最下行に「合計」行を設置／更新する
+function updateTotalRow(sh) {
+  var lastRow = sh.getLastRow();
+  if (lastRow < 2) return;
+
+  // 既存の合計行があれば削除してから作り直す
+  if (sh.getRange(lastRow, 1).getValue() === "合計") {
+    if (lastRow === 2) { sh.deleteRow(lastRow); return; }
+    sh.deleteRow(lastRow);
+    lastRow--;
+  }
+  if (lastRow < 2) return;
+
+  var totalRow = lastRow + 1;
+  sh.getRange(totalRow, 1).setValue("合計");
+  sh.getRange(totalRow, 5).setFormula("=SUM(E2:E" + lastRow + ")");
+  sh.getRange(totalRow, 7).setFormula("=SUM(G2:G" + lastRow + ")");
+  sh.getRange(totalRow, 1, 1, 7)
+    .setFontWeight("bold")
+    .setBackground("#0f172a")
+    .setFontColor("#fde68a");
 }
 
 function doPost(e) {
@@ -36,9 +63,16 @@ function doPost(e) {
   if (!Array.isArray(data)) data = [data];
   var tz = Session.getScriptTimeZone();
 
+  var touched = {};
   data.forEach(function (d) {
     var sh = ss.getSheetByName(d.staffName) || ss.insertSheet(d.staffName);
     ensureHeader(sh);
+    if (!touched[d.staffName]) {
+      // 合計行を一旦外す（findRowByDate が合計行を拾わないように）
+      var lr = sh.getLastRow();
+      if (lr >= 2 && sh.getRange(lr, 1).getValue() === "合計") sh.deleteRow(lr);
+      touched[d.staffName] = sh;
+    }
 
     var dateStr = String(d.date);
     var rowIdx = findRowByDate(sh, dateStr, tz);
@@ -60,6 +94,9 @@ function doPost(e) {
       dateStr, inT, outT, brk || "", hours, wage || "", pay
     ]]);
   });
+
+  // 書き込みが終わったシートごとに合計行を作り直す
+  Object.keys(touched).forEach(function (name) { updateTotalRow(touched[name]); });
 
   SpreadsheetApp.flush();
   return ContentService.createTextOutput("ok");
@@ -161,6 +198,7 @@ function consolidateDuplicates() {
     var order = [];
     for (var i = 1; i < values.length; i++) {
       var row = values[i];
+      if (row[0] === "合計") continue;
       var key = toDateStr(row[0], tz);
       if (!key) continue;
       if (!byDate[key]) {
@@ -199,6 +237,8 @@ function consolidateDuplicates() {
     // 元シートを削除して一時シートをリネーム
     ss.deleteSheet(oldSh);
     tmpSh.setName(name);
+
+    updateTotalRow(tmpSh);
   });
 
   SpreadsheetApp.flush();
