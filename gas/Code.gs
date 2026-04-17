@@ -67,17 +67,29 @@ function findRowByDate(sh, dateStr, tz) {
   return -1;
 }
 
-// セル値をHH:mm文字列に変換（Google Sheetsが時刻型にした値でも復元できる）
+// セル値をHH:mm文字列に変換（Date/日時文字列どちらでも正しく戻す）
 function toTimeStr(v, tz) {
   if (v === "" || v === null || v === undefined) return "";
-  if (v instanceof Date) return Utilities.formatDate(v, tz, "HH:mm");
-  return String(v).trim();
+  if (typeof v === "string" && /^\d{1,2}:\d{2}$/.test(v.trim())) return v.trim();
+  if (v && typeof v === "object" && typeof v.getTime === "function") {
+    return Utilities.formatDate(v, tz, "HH:mm");
+  }
+  var s = String(v).trim();
+  var d = new Date(s);
+  if (!isNaN(d.getTime())) return Utilities.formatDate(d, tz, "HH:mm");
+  return s;
 }
 
 function toDateStr(v, tz) {
   if (v === "" || v === null || v === undefined) return "";
-  if (v instanceof Date) return Utilities.formatDate(v, tz, "yyyy-MM-dd");
-  return String(v).trim();
+  if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v.trim())) return v.trim();
+  if (v && typeof v === "object" && typeof v.getTime === "function") {
+    return Utilities.formatDate(v, tz, "yyyy-MM-dd");
+  }
+  var s = String(v).trim();
+  var d = new Date(s);
+  if (!isNaN(d.getTime())) return Utilities.formatDate(d, tz, "yyyy-MM-dd");
+  return s;
 }
 
 function pick(newVal, oldVal) {
@@ -145,7 +157,7 @@ function consolidateDuplicates() {
       var pay = (h !== "" && r.wage > 0) ? Math.round(h * r.wage) : "";
       rows.push([r.date, r.inT, r.outT, r.brk || "", h, r.wage || "", pay]);
     });
-    Logger.log(name + ": " + values.length + "行 → " + rows.length + "行");
+    Logger.log(name + ": " + values.length + "行 → " + rows.length + "行, サンプル=" + JSON.stringify(rows[0]));
 
     // 新しい一時シートに書き出し → 元シートを削除 → リネーム
     var tmpName = name + "__tmp_" + new Date().getTime();
