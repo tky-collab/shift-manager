@@ -106,13 +106,20 @@ function calcHours(inT, outT, brkMins) {
 }
 
 // 既存シートの重複行を統合する（メニューから手動実行）
+// シートを丸ごと作り直すことで、古いDate/Time型フォーマットの記憶を完全に消す
 function consolidateDuplicates() {
+  Logger.log("=== consolidateDuplicates v4 開始 ===");
   var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   var tz = Session.getScriptTimeZone();
-  ss.getSheets().forEach(function (sh) {
-    var lastRow = sh.getLastRow();
-    if (lastRow < 2) return;
-    var values = sh.getRange(1, 1, lastRow, 7).getValues();
+  var sheets = ss.getSheets().slice(); // コピーしないとループ中に変わる
+
+  sheets.forEach(function (oldSh) {
+    var name = oldSh.getName();
+    var lastRow = oldSh.getLastRow();
+    if (lastRow < 2) { Logger.log(name + ": データなしスキップ"); return; }
+
+    // 既存データを読む
+    var values = oldSh.getRange(1, 1, lastRow, 7).getValues();
     var byDate = {};
     var order = [];
     for (var i = 1; i < values.length; i++) {
@@ -124,31 +131,39 @@ function consolidateDuplicates() {
         order.push(key);
       }
       var rec = byDate[key];
-      var inStr = toTimeStr(row[1], tz);   if (inStr) rec.inT = inStr;
-      var outStr = toTimeStr(row[2], tz);  if (outStr) rec.outT = outStr;
-      var b = Number(row[3]); if (!isNaN(b) && b > rec.brk) rec.brk = b;
+      var inStr  = toTimeStr(row[1], tz); if (inStr)  rec.inT  = inStr;
+      var outStr = toTimeStr(row[2], tz); if (outStr) rec.outT = outStr;
+      var b = Number(row[3]); if (!isNaN(b) && b > rec.brk)  rec.brk  = b;
       var w = Number(row[5]); if (!isNaN(w) && w > rec.wage) rec.wage = w;
     }
-    var out = [HEADERS];
+
+    // 整形して出力配列を作る
+    var rows = [];
     order.sort().forEach(function (key) {
       var r = byDate[key];
       var h = calcHours(r.inT, r.outT, r.brk);
       var pay = (h !== "" && r.wage > 0) ? Math.round(h * r.wage) : "";
-      out.push([r.date, r.inT, r.outT, r.brk || "", h, r.wage || "", pay]);
+      rows.push([r.date, r.inT, r.outT, r.brk || "", h, r.wage || "", pay]);
     });
-    sh.clearContents();
-    sh.clearFormats();
-    SpreadsheetApp.flush();
-    // 日付・出勤・退勤は列全体を文字列フォーマットに固定してからwrite
-    sh.getRange("A:C").setNumberFormat("@");
-    sh.getRange("D:D").setNumberFormat("0");
-    sh.getRange("E:E").setNumberFormat("0.00");
-    sh.getRange("F:G").setNumberFormat("0");
-    SpreadsheetApp.flush();
-    sh.getRange(1, 1, out.length, 7).setValues(out);
-    sh.setFrozenRows(1);
-    sh.getRange(1, 1, 1, HEADERS.length).setFontWeight("bold").setBackground("#1a1a2e").setFontColor("#e8e0ff");
-    Logger.log(sh.getName() + ": " + (out.length - 1) + "行に統合");
+    Logger.log(name + ": " + values.length + "行 → " + rows.length + "行");
+
+    // 新しい一時シートに書き出し → 元シートを削除 → リネーム
+    var tmpName = name + "__tmp_" + new Date().getTime();
+    var tmpSh = ss.insertSheet(tmpName);
+    tmpSh.getRange("A:C").setNumberFormat("@");
+    tmpSh.getRange("D:D").setNumberFormat("0");
+    tmpSh.getRange("E:E").setNumberFormat("0.00");
+    tmpSh.getRange("F:G").setNumberFormat("0");
+    var all = [HEADERS].concat(rows);
+    tmpSh.getRange(1, 1, all.length, 7).setValues(all);
+    tmpSh.setFrozenRows(1);
+    tmpSh.getRange(1, 1, 1, HEADERS.length).setFontWeight("bold").setBackground("#1a1a2e").setFontColor("#e8e0ff");
+
+    // 元シートを削除して一時シートをリネーム
+    ss.deleteSheet(oldSh);
+    tmpSh.setName(name);
   });
+
   SpreadsheetApp.flush();
+  Logger.log("=== 完了 ===");
 }
