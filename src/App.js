@@ -3,7 +3,8 @@ import { useState, useEffect } from "react";
 const DEFAULT_GAS_URL = "https://script.google.com/macros/s/AKfycbx_8yuah9cRkoNRGWtvMYvjuV5TnaYBrT9YkObapTCIVPgbYeX3E9lWZm-vXNuxfqQYzg/exec";
 
 const STAFF_LIST = ["スタッフ1", "スタッフ2", "スタッフ3", "スタッフ4", "スタッフ5", "スタッフ6", "スタッフ7"];
-const initialStaff = STAFF_LIST.map((name, i) => ({ id: i + 1, name }));
+const DEFAULT_WAGE = 1000;
+const initialStaff = STAFF_LIST.map((name, i) => ({ id: i + 1, name, hourlyWage: DEFAULT_WAGE }));
 
 function formatTime(date) { return date.toTimeString().slice(0, 5); }
 function formatDate(date) { return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,"0")}-${String(date.getDate()).padStart(2,"0")}`; }
@@ -20,7 +21,10 @@ function loadFromStorage(key,fallback) {
 }
 
 export default function ShiftManager() {
-  const [staff,setStaff]=useState(()=>loadFromStorage("shift_staff",initialStaff));
+  const [staff,setStaff]=useState(()=>{
+    const loaded=loadFromStorage("shift_staff",initialStaff);
+    return loaded.map(s=>({hourlyWage:DEFAULT_WAGE,...s}));
+  });
   const [records,setRecords]=useState(()=>loadFromStorage("shift_records",[]));
   const [tab,setTab]=useState("punch");
   const [selectedIds,setSelectedIds]=useState([]);
@@ -97,7 +101,16 @@ export default function ShiftManager() {
     // スプレッドシートに同期
     const syncRows = selectedIds.map(id => {
       const rec = newRecords.find(r => r.staffId===id && r.date===date);
-      return { staffName: rec?.staffName||"", date, direction, inTime: rec?.inTime||"", outTime: rec?.outTime||"", breakMins: direction==="break"?breakMins:rec?.breakMins||0 };
+      const member = staff.find(s => s.id===id);
+      return {
+        staffName: rec?.staffName||"",
+        date,
+        direction,
+        inTime: rec?.inTime||"",
+        outTime: rec?.outTime||"",
+        breakMins: direction==="break"?breakMins:rec?.breakMins||0,
+        hourlyWage: member?.hourlyWage||0,
+      };
     });
     syncToSheet(syncRows);
   }
@@ -108,10 +121,12 @@ export default function ShiftManager() {
   function exportCSV(monthFilter="all"){
     const filtered=monthFilter==="all"?records:records.filter(r=>r.date.startsWith(monthFilter));
     if(filtered.length===0){showToast("記録がないで","warn");return;}
-    const header="日付,名前,出勤時間,退勤時間,休憩(分),実働時間(h)";
+    const header="日付,名前,出勤時間,退勤時間,休憩(分),実働時間(h),時給,支払額";
     const rows=filtered.sort((a,b)=>a.date.localeCompare(b.date)).map(r=>{
-      const h=calcHours(r.inTime,r.outTime,r.breakMins||0)||"-";
-      return `${r.date},${r.staffName},${r.inTime||"-"},${r.outTime||"-"},${r.breakMins||0},${h}`;
+      const h=calcHours(r.inTime,r.outTime,r.breakMins||0);
+      const wage=staff.find(s=>s.id===r.staffId)?.hourlyWage||0;
+      const pay=h&&wage?Math.round(parseFloat(h)*wage):"";
+      return `${r.date},${r.staffName},${r.inTime||"-"},${r.outTime||"-"},${r.breakMins||0},${h||"-"},${wage||"-"},${pay||"-"}`;
     });
     const csv=[header,...rows].join("\n");
     const blob=new Blob(["\uFEFF"+csv],{type:"text/csv;charset=utf-8;"});
@@ -128,9 +143,13 @@ export default function ShiftManager() {
     setRecords(prev=>prev.map(r=>r.staffId===id?{...r,staffName:editNameVal.trim()}:r));
     setEditingName(null);
   }
+  function updateWage(id,wage){
+    const w=Math.max(0,Number(wage)||0);
+    setStaff(prev=>prev.map(s=>s.id===id?{...s,hourlyWage:w}:s));
+  }
   function addStaff(){
     if(!newName.trim())return;
-    setStaff(prev=>[...prev,{id:Date.now(),name:newName.trim()}]);
+    setStaff(prev=>[...prev,{id:Date.now(),name:newName.trim(),hourlyWage:DEFAULT_WAGE}]);
     setNewName("");showToast(`${newName.trim()}を追加したで！`);
   }
   function removeStaff(id){setStaff(prev=>prev.filter(s=>s.id!==id));setSelectedIds(prev=>prev.filter(x=>x!==id));}
@@ -275,7 +294,14 @@ export default function ShiftManager() {
                   const recs=records.filter(r=>r.staffId===s.id);
                   const total=recs.reduce((sum,r)=>{const h=calcHours(r.inTime,r.outTime,r.breakMins||0);return sum+(h?parseFloat(h):0);},0);
                   if(recs.length===0)return null;
-                  return(<div key={s.id} style={{display:"flex",justifyContent:"space-between",padding:"6px 0",borderBottom:"1px solid #2a2a3e"}}><span style={{fontSize:14}}>{s.name}</span><span style={{color:"#a78bfa",fontWeight:700,fontSize:14}}>{total.toFixed(1)}h ({recs.length}日)</span></div>);
+                  const pay=Math.round(total*(s.hourlyWage||0));
+                  return(<div key={s.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 0",borderBottom:"1px solid #2a2a3e"}}>
+                    <span style={{fontSize:14}}>{s.name}</span>
+                    <span style={{textAlign:"right"}}>
+                      <span style={{color:"#a78bfa",fontWeight:700,fontSize:14}}>{total.toFixed(1)}h ({recs.length}日)</span>
+                      {s.hourlyWage>0&&<span style={{display:"block",color:"#fde68a",fontSize:11,marginTop:2}}>¥{pay.toLocaleString()}</span>}
+                    </span>
+                  </div>);
                 })}
               </div>
             )}
@@ -287,19 +313,31 @@ export default function ShiftManager() {
             <div style={{fontSize:16,fontWeight:700,marginTop:20,marginBottom:16}}>スタッフ管理</div>
             <div style={{background:"#1a1a2e",borderRadius:16,overflow:"hidden",border:"1px solid #2a2a3e",marginBottom:16}}>
               {staff.map((s,i)=>(
-                <div key={s.id} style={{display:"flex",alignItems:"center",padding:"12px 14px",borderBottom:i<staff.length-1?"1px solid #2a2a3e":"none"}}>
-                  {editingName===s.id?(
-                    <>
-                      <input value={editNameVal} onChange={e=>setEditNameVal(e.target.value)} onKeyDown={e=>e.key==="Enter"&&saveEdit(s.id)} style={{flex:1,background:"#0f0f14",border:"1.5px solid #7c3aed",borderRadius:8,color:"#e8e0ff",fontSize:14,padding:"6px 10px",outline:"none"}} autoFocus/>
-                      <button onClick={()=>saveEdit(s.id)} style={{marginLeft:8,background:"#7c3aed",border:"none",borderRadius:8,color:"#fff",fontSize:12,padding:"6px 12px",cursor:"pointer"}}>保存</button>
-                    </>
-                  ):(
-                    <>
-                      <div style={{flex:1,fontWeight:600,fontSize:14}}>{s.name}</div>
-                      <button onClick={()=>startEdit(s)} style={{background:"none",border:"none",color:"#6c7a9c",fontSize:16,cursor:"pointer",marginRight:4}}>✏️</button>
-                      <button onClick={()=>removeStaff(s.id)} style={{background:"none",border:"none",color:"#4c4c6e",fontSize:16,cursor:"pointer"}}>🗑</button>
-                    </>
-                  )}
+                <div key={s.id} style={{padding:"12px 14px",borderBottom:i<staff.length-1?"1px solid #2a2a3e":"none"}}>
+                  <div style={{display:"flex",alignItems:"center"}}>
+                    {editingName===s.id?(
+                      <>
+                        <input value={editNameVal} onChange={e=>setEditNameVal(e.target.value)} onKeyDown={e=>e.key==="Enter"&&saveEdit(s.id)} style={{flex:1,background:"#0f0f14",border:"1.5px solid #7c3aed",borderRadius:8,color:"#e8e0ff",fontSize:14,padding:"6px 10px",outline:"none"}} autoFocus/>
+                        <button onClick={()=>saveEdit(s.id)} style={{marginLeft:8,background:"#7c3aed",border:"none",borderRadius:8,color:"#fff",fontSize:12,padding:"6px 12px",cursor:"pointer"}}>保存</button>
+                      </>
+                    ):(
+                      <>
+                        <div style={{flex:1,fontWeight:600,fontSize:14}}>{s.name}</div>
+                        <button onClick={()=>startEdit(s)} style={{background:"none",border:"none",color:"#6c7a9c",fontSize:16,cursor:"pointer",marginRight:4}}>✏️</button>
+                        <button onClick={()=>removeStaff(s.id)} style={{background:"none",border:"none",color:"#4c4c6e",fontSize:16,cursor:"pointer"}}>🗑</button>
+                      </>
+                    )}
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:8,marginTop:8}}>
+                    <span style={{fontSize:11,color:"#6c7a9c",fontWeight:600,minWidth:36}}>時給</span>
+                    <input
+                      type="number" min="0" step="10"
+                      value={s.hourlyWage??""}
+                      onChange={e=>updateWage(s.id,e.target.value)}
+                      style={{flex:1,background:"#0f0f14",border:"1.5px solid #2a2a3e",borderRadius:8,color:"#fde68a",fontSize:13,padding:"6px 10px",outline:"none",textAlign:"right"}}
+                    />
+                    <span style={{fontSize:11,color:"#6c7a9c"}}>円/h</span>
+                  </div>
                 </div>
               ))}
             </div>
