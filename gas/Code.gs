@@ -31,8 +31,6 @@ function doPost(e) {
     var pay = (hours !== "" && wage > 0) ? Math.round(hours * wage) : "";
 
     var targetRow = rowIdx === -1 ? sh.getLastRow() + 1 : rowIdx;
-    // 日付・出勤・退勤は文字列として扱う（Sheetsの自動時刻変換を防ぐ）
-    sh.getRange(targetRow, 1, 1, 3).setNumberFormat("@");
     sh.getRange(targetRow, 1, 1, HEADERS.length).setValues([[
       dateStr, inT, outT, brk || "", hours, wage || "", pay
     ]]);
@@ -43,6 +41,11 @@ function doPost(e) {
 }
 
 function ensureHeader(sh) {
+  // 列フォーマットを固定（Sheetsの時刻・日付自動変換を防ぐ）
+  sh.getRange("A:C").setNumberFormat("@");
+  sh.getRange("D:D").setNumberFormat("0");
+  sh.getRange("E:E").setNumberFormat("0.00");
+  sh.getRange("F:G").setNumberFormat("0");
   var firstRow = sh.getRange(1, 1, 1, HEADERS.length).getValues()[0];
   var needsHeader = sh.getLastRow() === 0 || firstRow[0] !== HEADERS[0] || firstRow[6] !== HEADERS[6];
   if (needsHeader) {
@@ -133,14 +136,19 @@ function consolidateDuplicates() {
       var pay = (h !== "" && r.wage > 0) ? Math.round(h * r.wage) : "";
       out.push([r.date, r.inT, r.outT, r.brk || "", h, r.wage || "", pay]);
     });
-    sh.clear();
-    // 日付・出勤・退勤列は文字列扱いにしてからwrite（Sheetsの自動時刻変換を防ぐ）
-    if (out.length > 1) {
-      sh.getRange(2, 1, out.length - 1, 3).setNumberFormat("@");
-    }
+    sh.clearContents();
+    sh.clearFormats();
+    SpreadsheetApp.flush();
+    // 日付・出勤・退勤は列全体を文字列フォーマットに固定してからwrite
+    sh.getRange("A:C").setNumberFormat("@");
+    sh.getRange("D:D").setNumberFormat("0");
+    sh.getRange("E:E").setNumberFormat("0.00");
+    sh.getRange("F:G").setNumberFormat("0");
+    SpreadsheetApp.flush();
     sh.getRange(1, 1, out.length, 7).setValues(out);
     sh.setFrozenRows(1);
     sh.getRange(1, 1, 1, HEADERS.length).setFontWeight("bold").setBackground("#1a1a2e").setFontColor("#e8e0ff");
+    Logger.log(sh.getName() + ": " + (out.length - 1) + "行に統合");
   });
   SpreadsheetApp.flush();
 }
