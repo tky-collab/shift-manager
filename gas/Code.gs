@@ -1,9 +1,9 @@
 // シフト管理アプリ用 GAS
-// 列構成: 日付 / 出勤 / 退勤 / 休憩(分) / 実働(h) / 時給 / 支払額
+// 列構成: 日付 / 出勤 / 退勤 / 休憩(分) / 実働(h) / 時給 / 支払額 / 交通費
 // 同じスタッフ・同じ日付は必ず1行にまとめる
 
 var SPREADSHEET_ID = "11XyuNAA5fJ50O7t2ECe0eu2j7PR0o2spkF5tgmYlsXc";
-var HEADERS = ["日付", "出勤", "退勤", "休憩(分)", "実働(h)", "時給", "支払額"];
+var HEADERS = ["日付", "出勤", "退勤", "休憩(分)", "実働(h)", "時給", "支払額", "交通費"];
 
 // シートで時給や時刻を手入力したら 実働・支払額 を自動再計算（シンプルトリガー）
 function onEdit(e) {
@@ -17,11 +17,12 @@ function onEdit(e) {
   var header = sh.getRange(1, 1).getValue();
   if (header !== "日付") return;
 
-  // 合計行を編集してしまった場合はスキップ
-  if (sh.getRange(row, 1).getValue() === "合計") return;
+  // 合計行・総合計行を編集してしまった場合はスキップ
+  var label = sh.getRange(row, 1).getValue();
+  if (label === "合計" || label === "総合計") return;
 
   var tz = Session.getScriptTimeZone();
-  var vals = sh.getRange(row, 1, 1, 7).getValues()[0];
+  var vals = sh.getRange(row, 1, 1, HEADERS.length).getValues()[0];
   var inT = toTimeStr(vals[1], tz);
   var outT = toTimeStr(vals[2], tz);
   var brk = Number(vals[3]) || 0;
@@ -34,26 +35,42 @@ function onEdit(e) {
   updateTotalRow(sh);
 }
 
-// シート最下行に「合計」行を設置／更新する
+// シート最下行に「合計」「総合計」行を設置／更新する
 function updateTotalRow(sh) {
   var lastRow = sh.getLastRow();
   if (lastRow < 2) return;
 
-  // 既存の合計行があれば削除してから作り直す
-  if (sh.getRange(lastRow, 1).getValue() === "合計") {
-    if (lastRow === 2) { sh.deleteRow(lastRow); return; }
-    sh.deleteRow(lastRow);
-    lastRow--;
+  // 既存の合計・総合計行を削除してから作り直す
+  while (lastRow >= 2) {
+    var lbl = sh.getRange(lastRow, 1).getValue();
+    if (lbl === "合計" || lbl === "総合計") {
+      sh.deleteRow(lastRow);
+      lastRow--;
+    } else {
+      break;
+    }
   }
   if (lastRow < 2) return;
 
   var totalRow = lastRow + 1;
+  var grandRow = lastRow + 2;
+
+  // 合計行: 実働(E)・支払額(G)・交通費(H) を SUM
   sh.getRange(totalRow, 1).setValue("合計");
   sh.getRange(totalRow, 5).setFormula("=SUM(E2:E" + lastRow + ")");
   sh.getRange(totalRow, 7).setFormula("=SUM(G2:G" + lastRow + ")");
-  sh.getRange(totalRow, 1, 1, 7)
+  sh.getRange(totalRow, 8).setFormula("=SUM(H2:H" + lastRow + ")");
+  sh.getRange(totalRow, 1, 1, HEADERS.length)
     .setFontWeight("bold")
     .setBackground("#0f172a")
+    .setFontColor("#fde68a");
+
+  // 総合計行: 労働費(G) + 交通費(H)
+  sh.getRange(grandRow, 1).setValue("総合計");
+  sh.getRange(grandRow, 7).setFormula("=G" + totalRow + "+H" + totalRow);
+  sh.getRange(grandRow, 1, 1, HEADERS.length)
+    .setFontWeight("bold")
+    .setBackground("#1e3a8a")
     .setFontColor("#fde68a");
 }
 
@@ -68,30 +85,34 @@ function doPost(e) {
     var sh = ss.getSheetByName(d.staffName) || ss.insertSheet(d.staffName);
     ensureHeader(sh);
     if (!touched[d.staffName]) {
-      // 合計行を一旦外す（findRowByDate が合計行を拾わないように）
+      // 合計・総合計行を一旦外す（findRowByDate が拾わないように）
       var lr = sh.getLastRow();
-      if (lr >= 2 && sh.getRange(lr, 1).getValue() === "合計") sh.deleteRow(lr);
+      while (lr >= 2) {
+        var l = sh.getRange(lr, 1).getValue();
+        if (l === "合計" || l === "総合計") { sh.deleteRow(lr); lr--; } else break;
+      }
       touched[d.staffName] = sh;
     }
 
     var dateStr = String(d.date);
     var rowIdx = findRowByDate(sh, dateStr, tz);
     var existing = rowIdx === -1
-      ? ["", "", "", "", "", "", ""]
+      ? ["", "", "", "", "", "", "", ""]
       : sh.getRange(rowIdx, 1, 1, HEADERS.length).getValues()[0];
 
     // 既存データを土台に、新しい値で上書き（空は既存を維持）
-    var inT  = pick(d.inTime,  toTimeStr(existing[1], tz));
-    var outT = pick(d.outTime, toTimeStr(existing[2], tz));
-    var brk  = pickNum(d.breakMins,  existing[3]);
-    var wage = pickNum(d.hourlyWage, existing[5]);
+    var inT       = pick(d.inTime,  toTimeStr(existing[1], tz));
+    var outT      = pick(d.outTime, toTimeStr(existing[2], tz));
+    var brk       = pickNum(d.breakMins,  existing[3]);
+    var wage      = pickNum(d.hourlyWage, existing[5]);
+    var transport = pickNum(d.transport,  existing[7]);
 
     var hours = calcHours(inT, outT, brk);
     var pay = (hours !== "" && wage > 0) ? Math.round(hours * wage) : "";
 
     var targetRow = rowIdx === -1 ? sh.getLastRow() + 1 : rowIdx;
     sh.getRange(targetRow, 1, 1, HEADERS.length).setValues([[
-      dateStr, inT, outT, brk || "", hours, wage || "", pay
+      dateStr, inT, outT, brk || "", hours, wage || "", pay, transport || ""
     ]]);
   });
 
@@ -107,9 +128,11 @@ function ensureHeader(sh) {
   sh.getRange("A:C").setNumberFormat("@");
   sh.getRange("D:D").setNumberFormat("0");
   sh.getRange("E:E").setNumberFormat("0.00");
-  sh.getRange("F:G").setNumberFormat("0");
+  sh.getRange("F:H").setNumberFormat("0");
   var firstRow = sh.getRange(1, 1, 1, HEADERS.length).getValues()[0];
-  var needsHeader = sh.getLastRow() === 0 || firstRow[0] !== HEADERS[0] || firstRow[6] !== HEADERS[6];
+  var needsHeader = sh.getLastRow() === 0
+    || firstRow[0] !== HEADERS[0]
+    || firstRow[HEADERS.length - 1] !== HEADERS[HEADERS.length - 1];
   if (needsHeader) {
     sh.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]);
     sh.setFrozenRows(1);
@@ -192,17 +215,18 @@ function consolidateDuplicates() {
     var lastRow = oldSh.getLastRow();
     if (lastRow < 2) { Logger.log(name + ": データなしスキップ"); return; }
 
-    // 既存データを読む
-    var values = oldSh.getRange(1, 1, lastRow, 7).getValues();
+    // 既存データを読む（交通費列が無い場合はlengthを抑える）
+    var colsToRead = Math.min(oldSh.getLastColumn(), HEADERS.length);
+    var values = oldSh.getRange(1, 1, lastRow, colsToRead).getValues();
     var byDate = {};
     var order = [];
     for (var i = 1; i < values.length; i++) {
       var row = values[i];
-      if (row[0] === "合計") continue;
+      if (row[0] === "合計" || row[0] === "総合計") continue;
       var key = toDateStr(row[0], tz);
       if (!key) continue;
       if (!byDate[key]) {
-        byDate[key] = { date: key, inT: "", outT: "", brk: 0, wage: 0 };
+        byDate[key] = { date: key, inT: "", outT: "", brk: 0, wage: 0, transport: 0 };
         order.push(key);
       }
       var rec = byDate[key];
@@ -210,6 +234,7 @@ function consolidateDuplicates() {
       var outStr = toTimeStr(row[2], tz); if (outStr) rec.outT = outStr;
       var b = Number(row[3]); if (!isNaN(b) && b > rec.brk)  rec.brk  = b;
       var w = Number(row[5]); if (!isNaN(w) && w > rec.wage) rec.wage = w;
+      var t = Number(row[7]); if (!isNaN(t) && t > rec.transport) rec.transport = t;
     }
 
     // 整形して出力配列を作る
@@ -218,7 +243,7 @@ function consolidateDuplicates() {
       var r = byDate[key];
       var h = calcHours(r.inT, r.outT, r.brk);
       var pay = (h !== "" && r.wage > 0) ? Math.round(h * r.wage) : "";
-      rows.push([r.date, r.inT, r.outT, r.brk || "", h, r.wage || "", pay]);
+      rows.push([r.date, r.inT, r.outT, r.brk || "", h, r.wage || "", pay, r.transport || ""]);
     });
     Logger.log(name + ": " + values.length + "行 → " + rows.length + "行, サンプル=" + JSON.stringify(rows[0]));
 
@@ -228,9 +253,9 @@ function consolidateDuplicates() {
     tmpSh.getRange("A:C").setNumberFormat("@");
     tmpSh.getRange("D:D").setNumberFormat("0");
     tmpSh.getRange("E:E").setNumberFormat("0.00");
-    tmpSh.getRange("F:G").setNumberFormat("0");
+    tmpSh.getRange("F:H").setNumberFormat("0");
     var all = [HEADERS].concat(rows);
-    tmpSh.getRange(1, 1, all.length, 7).setValues(all);
+    tmpSh.getRange(1, 1, all.length, HEADERS.length).setValues(all);
     tmpSh.setFrozenRows(1);
     tmpSh.getRange(1, 1, 1, HEADERS.length).setFontWeight("bold").setBackground("#1a1a2e").setFontColor("#e8e0ff");
 
