@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 
-const DEFAULT_GAS_URL = "https://script.google.com/macros/s/AKfycbx_8yuah9cRkoNRGWtvMYvjuV5TnaYBrT9YkObapTCIVPgbYeX3E9lWZm-vXNuxfqQYzg/exec";
+const DEFAULT_GAS_URL = "https://script.google.com/macros/s/AKfycbyBA9oz5az9IMky3XDAo8yMK0cAxnvOSUgOkn62Kb1vmvoNKHpxMNDX6Qf6gSTopb5HdA/exec";
 
 const STAFF_LIST = ["スタッフ1", "スタッフ2", "スタッフ3", "スタッフ4", "スタッフ5", "スタッフ6", "スタッフ7"];
 const DEFAULT_WAGE = 1000;
